@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>クリックしたらかわちいエフェクト</title>
+<style>
+  /* フルスクリーンキャンバスと簡単なUI */
+  html,body{height:100%;margin:0;background:#111;overflow:hidden}
+  canvas{display:block;width:100%;height:100%}
+  .hint{position:fixed;left:12px;bottom:12px;color:#fff6;font-size:13px;font-family:system-ui}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hint">タップ／クリックで“ポンッ”と広がるよ</div>
+
+<script>
+/* インクがぱっと広がるエフェクトを生成してアニメーション */
+const cvs=document.getElementById('c'), ctx=cvs.getContext('2d');
+let W, H, parts=[];
+const rand=(a,b)=>a+Math.random()*(b-a);
+function resize(){W=cvs.width=innerWidth; H=cvs.height=innerHeight}
+addEventListener('resize',resize); resize();
+
+function makeInk(x,y){
+  const baseColor = `hsl(${Math.floor(rand(0,360))}deg ${Math.floor(rand(60,90))}% ${Math.floor(rand(45,65))}%)`;
+  for(let i=0;i<22;i++){
+    parts.push({
+      x,y,
+      vx: Math.cos(i/3.5+rand(-0.6,0.6))*rand(1,6),
+      vy: Math.sin(i/2.5+rand(-0.6,0.6))*rand(1,6),
+      r: rand(6,26),
+      life: rand(60,120),
+      col: baseColor
+    });
+  }
+}
+
+cvs.addEventListener('pointerdown', e=>{
+  const rect=cvs.getBoundingClientRect();
+  makeInk(e.clientX - rect.left, e.clientY - rect.top);
+  // 直感的な反応（小さな波紋）
+  parts.push({x:e.clientX,y:e.clientY,vx:0,vy:0,r:2,life:18,col:'white'});
+});
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  // 背景をほのかに暗く残す（残像感）
+  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.fillRect(0,0,W,H);
+
+  for(let i=parts.length-1;i>=0;i--){
+    const p=parts[i];
+    p.x+=p.vx; p.y+=p.vy;
+    p.vx *= 0.98; p.vy *= 0.98;
+    p.vy += 0.08; // わずかな重力感
+    p.life--;
+    const alpha = Math.max(0, p.life / 120);
+    ctx.beginPath();
+    ctx.fillStyle = `color-mix(in srgb, ${p.col} ${Math.min(100,80*alpha)}%, transparent)`;
+    ctx.globalAlpha = alpha;
+    ctx.arc(p.x,p.y, Math.max(0.5,p.r*alpha), 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    if(p.life<=0) parts.splice(i,1);
+  }
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
