@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>エフェクトコレクション!</title>
+    <title>エフェクトコレクション</title>
     <style>
         * {
             margin: 0;
@@ -74,7 +74,7 @@
     <canvas id="c"></canvas>
 
     <div class="menu">
-        <button onclick="setEffect(0)" class="active">インク広がり</button>
+        <button onclick="setEffect(0)" class="active">インクの広がり</button>
         <button onclick="setEffect(1)">星</button>
         <button onclick="setEffect(2)">波紋</button>
         <button onclick="setEffect(3)">花火</button>
@@ -260,8 +260,6 @@
             starExplosion,
             ripple,
             firework,
-            lightning,
-            snowflake,
             flame,
             spiral
         ];
@@ -275,6 +273,15 @@
             document.querySelectorAll('.menu button').forEach((btn, i) => {
                 btn.classList.toggle('active', i === index);
             });
+        }
+
+        // コード表示・非表示
+        function showCode() {
+            document.getElementById('codeModal').style.display = 'block';
+        }
+
+        function hideCode() {
+            document.getElementById('codeModal').style.display = 'none';
         }
 
         // クリック/タップでエフェクト発動
@@ -317,6 +324,14 @@
                         break;
 
                     case 'star':
+                        p.x += p.vx;
+                        p.y += p.vy;
+                        p.vx *= 0.98;
+                        p.vy *= 0.98;
+                        p.vy += 0.1; // 重力
+                        p.rotation += p.rotSpeed; // 回転
+                        break;
+
                     case 'flame':
                         p.x += p.vx;
                         p.y += p.vy;
@@ -362,6 +377,35 @@
                         break;
 
                     case 'star':
+                        // 五芒星を描画
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle = p.color;
+                        ctx.save();
+                        ctx.translate(p.x, p.y);
+                        ctx.rotate(p.rotation);
+                        ctx.scale(alpha, alpha);
+
+                        // 五芒星のパス
+                        ctx.beginPath();
+                        for (let i = 0; i < 5; i++) {
+                            const angle = (i * 4 * Math.PI) / 5 - Math.PI / 2;
+                            const x = Math.cos(angle) * p.r;
+                            const y = Math.sin(angle) * p.r;
+                            if (i === 0) ctx.moveTo(x, y);
+                            else ctx.lineTo(x, y);
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+
+                        // 光るエフェクト
+                        ctx.shadowBlur = 10;
+                        ctx.shadowColor = p.color;
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+
+                        ctx.restore();
+                        break;
+
                     case 'flame':
                     case 'firework':
                         // 円
