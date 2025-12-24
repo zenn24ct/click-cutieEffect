@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>エフェクトコレクション</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{height:100vh;background:#0a0a0a;overflow:hidden;font-family:system-ui}
+  canvas{display:block;width:100%;height:100%}
+  
+  /* エフェクト切替メニュー */
+  .menu{position:fixed;top:15px;left:15px;background:rgba(0,0,0,.8);padding:12px;border-radius:10px;color:#fff}
+  .menu button{
+    display:block;
+    width:180px;
+    padding:10px;
+    margin:5px 0;
+    background:#333;
+    border:2px solid #555;
+    color:#fff;
+    border-radius:6px;
+    cursor:pointer;
+    font-size:14px;
+    transition:all .2s;
+  }
+  .menu button:hover{background:#555;transform:scale(1.05)}
+  .menu button.active{background:#667eea;border-color:#667eea}
+  
+  .hint{position:fixed;bottom:15px;left:15px;color:rgba(255,255,255,.5);font-size:13px}
+</style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  
+  <div class="menu">
+    <button onclick="setEffect(0)" class="active">💧 インク広がり</button>
+    <button onclick="setEffect(1)">✨ 星の爆発</button>
+    <button onclick="setEffect(2)">🌊 波紋</button>
+    <button onclick="setEffect(3)">🎆 花火</button>
+    <button onclick="setEffect(4)">⚡ 稲妻</button>
+    <button onclick="setEffect(5)">❄️ 雪の結晶</button>
+    <button onclick="setEffect(6)">🔥 炎</button>
+    <button onclick="setEffect(7)">🌀 渦巻き</button>
+  </div>
+  
+  <div class="hint">クリック/タップでエフェクト発動</div>
+
+<script>
+// ============================
+// 基本設定
+// ============================
+const cvs = document.getElementById('c');
+const ctx = cvs.getContext('2d');
+let W, H;
+let particles = [];
+let currentEffect = 0;
+
+// 画面リサイズ対応
+function resize(){
+  W = cvs.width = window.innerWidth;
+  H = cvs.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ユーティリティ
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = (a, b) => Math.floor(rand(a, b + 1));
+
+// ============================
+// エフェクト1: インク広がり（オリジナル版）
+// ============================
+function inkEffect(x, y){
+  // ランダムなカラフルな色
+  const color = `hsl(${Math.floor(rand(0,360))} ${Math.floor(rand(60,90))}% ${Math.floor(rand(45,65))}%)`;
+  
+  // 不規則に広がるインクのパーティクル
+  for (let i = 0; i < 22; i++){
+    particles.push({
+      x, y,
+      vx: Math.cos(i/3.5 + rand(-0.6, 0.6)) * rand(1, 6),
+      vy: Math.sin(i/2.5 + rand(-0.6, 0.6)) * rand(1, 6),
+      r: rand(6, 26),
+      life: rand(60, 120),
+      maxLife: 120,
+      color: color,
+      type: 'ink'
+    });
+  }
+  
+  // クリック地点の小さな白い波紋
+  particles.push({
+    x, y,
+    vx: 0,
+    vy: 0,
+    r: 2,
+    life: 18,
+    maxLife: 18,
+    color: 'white',
+    type: 'ink'
+  });
+}
+
+// ============================
+// エフェクト2: 星の爆発
+// ============================
+function starExplosion(x, y){
+  // 光る星パーティクル
+  for (let i = 0; i < 40; i++){
+    const angle = rand(0, Math.PI * 2);
+    const speed = rand(1, 10);
+    
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: rand(2, 6),
+      life: rand(40, 80),
+      maxLife: 80,
+      color: ['#ffd700', '#ffff00', '#fff'][randInt(0, 2)],
+      type: 'star'
+    });
+  }
+}
+
+// ============================
+// エフェクト3: 波紋
+// ============================
+function ripple(x, y){
+  // 3重の波紋
+  for (let i = 0; i < 3; i++){
+    particles.push({
+      x, y,
+      r: 5,
+      maxR: 150,
+      speed: rand(2, 4),
+      life: 60,
+      maxLife: 60,
+      color: `hsl(${randInt(180,220)} 70% 60%)`,
+      delay: i * 8,
+      type: 'ripple'
+    });
+  }
+}
+
+// ============================
+// エフェクト4: 花火
+// ============================
+function firework(x, y){
+  const color = `hsl(${randInt(0,360)} 80% 60%)`;
+  
+  // 放射状に飛び散る
+  for (let i = 0; i < 50; i++){
+    const angle = rand(0, Math.PI * 2);
+    const speed = rand(3, 12);
+    
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 2,
+      r: rand(3, 8),
+      life: rand(50, 90),
+      maxLife: 90,
+      color: color,
+      gravity: 0.15,
+      type: 'firework'
+    });
+  }
+}
+
+// ============================
+// エフェクト5: 稲妻
+// ============================
+function lightning(x, y){
+  // 稲妻の枝
+  const branches = 5;
+  
+  for (let b = 0; b < branches; b++){
+    const points = [{x, y}];
+    let curX = x;
+    let curY = y;
+    
+    // ジグザグに伸びる
+    for (let i = 0; i < 8; i++){
+      curX += rand(-30, 30);
+      curY += rand(20, 40);
+      points.push({x: curX, y: curY});
+    }
+    
+    particles.push({
+      points: points,
+      life: 20,
+      maxLife: 20,
+      width: rand(2, 5),
+      type: 'lightning'
+    });
+  }
+}
+
+// ============================
+// エフェクト6: 雪の結晶
+// ============================
+function snowflake(x, y){
+  // 6方向の結晶
+  for (let i = 0; i < 6; i++){
+    const angle = (Math.PI * 2 * i) / 6;
+    const len = rand(20, 50);
+    
+    particles.push({
+      x, y,
+      angle: angle,
+      len: len,
+      life: 80,
+      maxLife: 80,
+      type: 'snowflake'
+    });
+  }
+}
+
+// ============================
+// エフェクト7: 炎
+// ============================
+function flame(x, y){
+  // 上昇する炎パーティクル
+  for (let i = 0; i < 30; i++){
+    particles.push({
+      x: x + rand(-10, 10),
+      y: y,
+      vx: rand(-1, 1),
+      vy: rand(-8, -3),
+      r: rand(5, 20),
+      life: rand(30, 60),
+      maxLife: 60,
+      color: ['#ff4500', '#ff6347', '#ffa500', '#ffff00'][randInt(0, 3)],
+      type: 'flame'
+    });
+  }
+}
+
+// ============================
+// エフェクト8: 渦巻き
+// ============================
+function spiral(x, y){
+  // 螺旋状に広がる
+  for (let i = 0; i < 60; i++){
+    const angle = (i / 60) * Math.PI * 6;
+    const dist = i * 2;
+    
+    particles.push({
+      x, y,
+      angle: angle,
+      dist: dist,
+      speed: rand(1, 3),
+      r: rand(3, 8),
+      life: rand(60, 100),
+      maxLife: 100,
+      color: `hsl(${(i * 6) % 360} 70% 60%)`,
+      type: 'spiral'
+    });
+  }
+}
+
+// ============================
+// エフェクト実行
+// ============================
+const effects = [
+  inkEffect,
+  starExplosion,
+  ripple,
+  firework,
+  lightning,
+  snowflake,
+  flame,
+  spiral
+];
+
+// エフェクト切替
+function setEffect(index){
+  currentEffect = index;
+  particles = []; // クリア
+  
+  // ボタンのactive状態更新
+  document.querySelectorAll('.menu button').forEach((btn, i) => {
+    btn.classList.toggle('active', i === index);
+  });
+}
+
+// クリック/タップでエフェクト発動
+cvs.addEventListener('pointerdown', e => {
+  const rect = cvs.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  
+  effects[currentEffect](x, y);
+});
+
+// ============================
+// パーティクル更新・描画
+// ============================
+function updateParticles(){
+  for (let i = particles.length - 1; i >= 0; i--){
+    const p = particles[i];
+    
+    // 遅延処理
+    if (p.delay > 0){
+      p.delay--;
+      continue;
+    }
+    
+    p.life--;
+    if (p.life <= 0){
+      particles.splice(i, 1);
+      continue;
+    }
+    
+    // タイプ別更新
+    switch(p.type){
+      case 'ink':
+        // オリジナルのインク挙動
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vx *= 0.98;
+        p.vy *= 0.98;
+        p.vy += 0.08; // わずかな重力感
+        break;
+        
+      case 'star':
+      case 'flame':
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vx *= 0.98;
+        p.vy *= 0.98;
+        p.vy += 0.1; // 重力
+        break;
+        
+      case 'firework':
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += p.gravity;
+        p.vx *= 0.99;
+        break;
+        
+      case 'ripple':
+        p.r += p.speed;
+        break;
+        
+      case 'spiral':
+        p.angle += 0.05;
+        p.dist += p.speed;
+        p.x += Math.cos(p.angle) * p.speed;
+        p.y += Math.sin(p.angle) * p.speed;
+        break;
+    }
+  }
+}
+
+function drawParticles(){
+  particles.forEach(p => {
+    const alpha = p.life / p.maxLife;
+    
+    switch(p.type){
+      case 'ink':
+        // オリジナルのインク描画（color-mix風の透明度）
+        const inkAlpha = Math.max(0, alpha);
+        ctx.globalAlpha = inkAlpha;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, Math.max(0.5, p.r * inkAlpha), 0, Math.PI * 2);
+        ctx.fill();
+        break;
+        
+      case 'star':
+      case 'flame':
+      case 'firework':
+        // 円
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * alpha, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+        
+      case 'ripple':
+        // 円の輪
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.stroke();
+        break;
+        
+      case 'lightning':
+        // 稲妻の線
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = p.width;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#00f';
+        ctx.beginPath();
+        ctx.moveTo(p.points[0].x, p.points[0].y);
+        p.points.forEach((pt, i) => {
+          if (i > 0) ctx.lineTo(pt.x, pt.y);
+        });
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        break;
+        
+      case 'snowflake':
+        // 雪の結晶（6方向の線）
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        const endX = p.x + Math.cos(p.angle) * p.len * alpha;
+        const endY = p.y + Math.sin(p.angle) * p.len * alpha;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+        
+        // 枝
+        const branchLen = p.len * 0.3 * alpha;
+        ctx.beginPath();
+        ctx.moveTo(endX, endY);
+        ctx.lineTo(
+          endX + Math.cos(p.angle + Math.PI/4) * branchLen,
+          endY + Math.sin(p.angle + Math.PI/4) * branchLen
+        );
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(endX, endY);
+        ctx.lineTo(
+          endX + Math.cos(p.angle - Math.PI/4) * branchLen,
+          endY + Math.sin(p.angle - Math.PI/4) * branchLen
+        );
+        ctx.stroke();
+        break;
+        
+      case 'spiral':
+        // 渦の点
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * alpha, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+    }
+  });
+  
+  ctx.globalAlpha = 1;
+}
+
+// ============================
+// メインループ
+// ============================
+function loop(){
+  // 背景を薄く塗って残像効果
+  ctx.fillStyle = 'rgba(10, 10, 10, 0.15)';
+  ctx.fillRect(0, 0, W, H);
+  
+  updateParticles();
+  drawParticles();
+  
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
