@@ -2,7 +2,7 @@
 クリック／タップ発動型のビジュアルエフェクト集。
 
 ## デモ動画
-https://github.com/zenn24ct/click-cutieeffect/assets/demo.mp4
+https://github.com/zenn24ct/click-cutieEffect/assets/demo.mp4
 
 
 ## 概要
