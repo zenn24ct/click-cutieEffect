@@ -1,9 +1,10 @@
 # clickエフェクトコレクション
 クリック／タップ発動型のビジュアルエフェクト集。
 
-## デモ動画(うまく表示できない 
+## デモ動画(うまく表示できない）
 https://github.com/zenn24ct/click-cutieEffect/assets/demo.mp4
-
+## デモ写真
+![demo](assets/star.png)
 
 ## 概要
 - JavaScript のみで実装（外部ライブラリ不使用）
