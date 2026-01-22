@@ -1,346 +1,330 @@
-<!doctype html>
-<html lang="ja">
+'use server'
 
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>エフェクトコレクション</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box
+import { revalidatePath } from 'next/cache'
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
+
+// お知らせデータの型定義
+export interface Announcement {
+  id: string;
+  title: string;
+  category: "試験情報" | "お知らせ";
+  content: string;
+  isPublished: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// カテゴリ名をディレクトリ名にマッピング
+const categoryDirMap: Record<string, string> = {
+  "試験情報": "exam",
+  "お知らせ": "news",
+}
+
+// S3 設定（環境変数）
+const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME
+const AWS_REGION = process.env.AWS_REGION
+const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID
+const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY
+
+// S3 クライアント
+if (!S3_BUCKET_NAME || !AWS_REGION || !AWS_ACCESS_KEY_ID || !AWS_SECRET_ACCESS_KEY) {
+  throw new Error('S3 configuration is required')
+}
+
+const s3Client = new S3Client({
+  region: AWS_REGION,
+  credentials: {
+    accessKeyId: AWS_ACCESS_KEY_ID,
+    secretAccessKey: AWS_SECRET_ACCESS_KEY,
+  },
+})
+
+// タイトルをファイル名に適した形式に変換
+function convertToSlug(title: string): string {
+  return title
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/[^\w\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF-]/g, '')
+    .slice(0, 50);
+}
+
+// S3でファイルが存在するかチェック
+async function s3FileExists(key: string): Promise<boolean> {
+  try {
+    await s3Client.send(new GetObjectCommand({
+      Bucket: S3_BUCKET_NAME!,
+      Key: key,
+    }))
+    return true
+  } catch {
+    return false
+  }
+}
+
+// タイトルとカテゴリからIDを生成
+async function generateUniqueId(title: string, category: string): Promise<string> {
+  const date = new Date()
+  const dateStr = date.getFullYear() 
+    + String(date.getMonth() + 1).padStart(2, '0') 
+    + String(date.getDate()).padStart(2, '0')
+  
+  const slug = convertToSlug(title)
+  const baseSlug = slug || 'untitled'
+  const categoryDir = categoryDirMap[category] || 'news'
+  
+  let filename = `${dateStr}--${baseSlug}`
+  let counter = 1
+  
+  // 同じファイル名が存在する場合は番号を付ける
+  while (await s3FileExists(`local/announcements/${categoryDir}/${filename}.json`)) {
+    filename = `${dateStr}--${baseSlug}-${counter}`
+    counter++
+  }
+  
+  return `${categoryDir}/${filename}`
+}
+
+// 既存のIDから日付部分を抽出
+function extractDateFromId(id: string): string {
+  const parts = id.split('/')
+  const filename = parts[parts.length - 1]
+  const match = filename.match(/^(\d{8})--/)
+  return match ? match[1] : ''
+}
+
+// タイトルとカテゴリから新しいIDを生成（日付は既存のものを使用）
+async function generateUpdatedId(
+  oldId: string,
+  newTitle: string,
+  newCategory: string
+): Promise<string> {
+  const dateStr = extractDateFromId(oldId)
+  
+  if (!dateStr) {
+    return generateUniqueId(newTitle, newCategory)
+  }
+  
+  const slug = convertToSlug(newTitle)
+  const baseSlug = slug || 'untitled'
+  const categoryDir = categoryDirMap[newCategory] || 'news'
+  
+  let filename = `${dateStr}--${baseSlug}`
+  let counter = 1
+  
+  const oldS3Key = `local/announcements/${oldId}.json`
+  while (await s3FileExists(`local/announcements/${categoryDir}/${filename}.json`)) {
+    const checkKey = `local/announcements/${categoryDir}/${filename}.json`
+    if (checkKey === oldS3Key) {
+      break
+    }
+    filename = `${dateStr}--${baseSlug}-${counter}`
+    counter++
+  }
+  
+  return `${categoryDir}/${filename}`
+}
+
+// S3 に JSON をアップロード
+async function uploadJsonToS3(key: string, json: string) {
+  const cmd = new PutObjectCommand({
+    Bucket: S3_BUCKET_NAME!,
+    Key: key,
+    Body: Buffer.from(json, 'utf-8'),
+    ContentType: 'application/json; charset=utf-8',
+  })
+  await s3Client.send(cmd)
+  return `https://${S3_BUCKET_NAME}.s3.${AWS_REGION}.amazonaws.com/${encodeURIComponent(key)}`
+}
+
+// S3からJSONを取得
+async function getJsonFromS3(key: string): Promise<string | null> {
+  try {
+    const cmd = new GetObjectCommand({
+      Bucket: S3_BUCKET_NAME!,
+      Key: key,
+    })
+    const response = await s3Client.send(cmd)
+    const body = await response.Body?.transformToString()
+    return body || null
+  } catch {
+    return null
+  }
+}
+
+// お知らせを作成
+export async function createAnnouncement(
+  data: Omit<Announcement, "id" | "createdAt" | "updatedAt">
+) {
+  console.log("createAnnouncement called with data:", data);
+  try {
+    const id = await generateUniqueId(data.title, data.category)
+    console.log("Generated ID:", id);
+    
+    const newAnnouncement: Announcement = {
+      ...data,
+      id: id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+
+    const json = JSON.stringify(newAnnouncement, null, 2)
+    const s3Key = `local/announcements/${id}.json`
+    const s3Url = await uploadJsonToS3(s3Key, json)
+    console.log('Uploaded announcement to S3:', s3Key)
+
+    try {
+      revalidatePath('/announcements')
+      revalidatePath('/admin/announcements')
+    } catch (e) {
+      console.warn('revalidatePath warning:', e)
+    }
+
+    return { success: true, data: newAnnouncement, url: s3Url }
+  } catch (error) {
+    console.error('Failed to create announcement:', error)
+    return { success: false, error: 'お知らせの作成に失敗しました' }
+  }
+}
+
+// すべてのお知らせを取得
+export async function getAnnouncements(): Promise<Announcement[]> {
+  try {
+    const announcements: Announcement[] = []
+    
+    // S3からすべてのお知らせファイルを取得
+    const listCmd = new ListObjectsV2Command({
+      Bucket: S3_BUCKET_NAME!,
+      Prefix: 'local/announcements/',
+    })
+    
+    const response = await s3Client.send(listCmd)
+    
+    if (response.Contents) {
+      for (const obj of response.Contents) {
+        if (obj.Key && obj.Key.endsWith('.json')) {
+          const content = await getJsonFromS3(obj.Key)
+          if (content) {
+            announcements.push(JSON.parse(content) as Announcement)
+          }
         }
+      }
+    }
 
-        body {
-            height: 100vh;
-            background: #0a0a0a;
-            overflow: hidden;
-            font-family: system-ui
-        }
+    // 作成日時の降順でソート
+    return announcements.sort((a, b) => 
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    )
+  } catch (error) {
+    console.error('Failed to get announcements:', error)
+    return []
+  }
+}
 
-        canvas {
-            display: block;
-            width: 100%;
-            height: 100%
-        }
+// 公開中のお知らせのみ取得
+export async function getPublishedAnnouncements(): Promise<Announcement[]> {
+  const announcements = await getAnnouncements()
+  return announcements.filter(a => a.isPublished)
+}
 
-        .menu {
-            position: fixed;
-            top: 15px;
-            left: 15px;
-            background: rgba(0, 0, 0, .8);
-            padding: 12px;
-            border-radius: 10px;
-            color: #fff
-        }
+// IDでお知らせを取得
+export async function getAnnouncementById(id: string): Promise<Announcement | null> {
+  try {
+    const s3Key = `local/announcements/${id}.json`
+    const content = await getJsonFromS3(s3Key)
+    if (!content) return null
+    return JSON.parse(content) as Announcement
+  } catch (error) {
+    console.error('Failed to get announcement:', error)
+    return null
+  }
+}
 
-        .menu button {
-            display: block;
-            width: 180px;
-            padding: 10px;
-            margin: 5px 0;
-            background: #333;
-            border: 2px solid #555;
-            color: #fff;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all .2s;
-        }
+// お知らせを更新
+export async function updateAnnouncement(
+  id: string,
+  updates: Partial<Omit<Announcement, "id" | "createdAt">>
+) {
+  try {
+    const existing = await getAnnouncementById(id)
+    if (!existing) {
+      return { success: false, error: 'お知らせが見つかりません' }
+    }
 
-        .menu button:hover {
-            background: #555;
-            transform: scale(1.05)
-        }
+    const titleChanged = updates.title && updates.title !== existing.title
+    const categoryChanged = updates.category && updates.category !== existing.category
+    
+    let newId = id
+    let needsRename = titleChanged || categoryChanged
 
-        .menu button.active {
-            background: #667eea;
-            border-color: #667eea
-        }
+    if (needsRename) {
+      const newTitle = updates.title || existing.title
+      const newCategory = updates.category || existing.category
+      newId = await generateUpdatedId(id, newTitle, newCategory)
+      console.log('Renaming announcement:', { oldId: id, newId })
+    }
 
-        .hint {
-            position: fixed;
-            bottom: 15px;
-            left: 15px;
-            color: rgba(255, 255, 255, .5);
-            font-size: 13px
-        }
-    </style>
-</head>
+    const updated: Announcement = {
+      ...existing,
+      ...updates,
+      id: newId,
+      updatedAt: new Date().toISOString(),
+    }
 
-<body>
-    <canvas id="c"></canvas>
+    const json = JSON.stringify(updated, null, 2)
 
-    <!-- メニュー：稲妻（4）と雪（5）を削除し、インデックスを 0..5 に詰めています -->
-    <div class="menu">
-        <button onclick="setEffect(0)" class="active">インクの広がり</button>
-        <button onclick="setEffect(1)">星</button>
-        <button onclick="setEffect(2)">波紋</button>
-        <button onclick="setEffect(3)">花火</button>
-        <button onclick="setEffect(4)">炎</button>
-        <button onclick="setEffect(5)">渦巻き</button>
-    </div>
+    if (needsRename && newId !== id) {
+      // 古いS3ファイルを削除
+      try {
+        const oldS3Key = `local/announcements/${id}.json`
+        await s3Client.send(new DeleteObjectCommand({
+          Bucket: S3_BUCKET_NAME!,
+          Key: oldS3Key,
+        }))
+        console.log('Deleted old S3 file:', oldS3Key)
+      } catch (err) {
+        console.error('Failed to delete old S3 file:', err)
+      }
 
-    <div class="hint">クリック/タップでエフェクト発動</div>
+      // 新しいS3ファイルをアップロード
+      const newS3Key = `local/announcements/${newId}.json`
+      await uploadJsonToS3(newS3Key, json)
+      console.log('Uploaded new S3 file:', newS3Key)
+    } else {
+      // S3ファイルを上書き
+      const s3Key = `local/announcements/${id}.json`
+      await uploadJsonToS3(s3Key, json)
+      console.log('Updated announcement on S3:', s3Key)
+    }
 
-    <script>
-        const cvs = document.getElementById('c');
-        const ctx = cvs.getContext('2d');
-        let W, H;
-        let particles = [];
-        let currentEffect = 0;
+    revalidatePath('/announcements')
+    revalidatePath('/news')
+    revalidatePath(`/announcements/${id}`)
+    revalidatePath(`/announcements/${newId}`)
+    revalidatePath('/admin/announcements')
 
-        function resize() { W = cvs.width = window.innerWidth; H = cvs.height = window.innerHeight; }
-        window.addEventListener('resize', resize);
-        resize();
+    return { success: true, data: updated, newId }
+  } catch (error) {
+    console.error('Failed to update announcement:', error)
+    return { success: false, error: 'お知らせの更新に失敗しました' }
+  }
+}
 
-        const rand = (a, b) => a + Math.random() * (b - a);
-        const randInt = (a, b) => Math.floor(rand(a, b + 1));
+// お知らせを削除
+export async function deleteAnnouncement(id: string) {
+  try {
+    const s3Key = `local/announcements/${id}.json`
+    await s3Client.send(new DeleteObjectCommand({
+      Bucket: S3_BUCKET_NAME!,
+      Key: s3Key,
+    }))
+    console.log('Deleted announcement from S3:', id)
 
-        // ===== エフェクト：インク =====
-        function inkEffect(x, y) {
-            const color = `hsl(${Math.floor(rand(0, 360))} ${Math.floor(rand(60, 90))}% ${Math.floor(rand(45, 65))}%)`;
-            for (let i = 0; i < 22; i++) {
-                particles.push({
-                    x, y,
-                    vx: Math.cos(i / 3.5 + rand(-0.6, 0.6)) * rand(1, 6),
-                    vy: Math.sin(i / 2.5 + rand(-0.6, 0.6)) * rand(1, 6),
-                    r: rand(6, 26),
-                    life: rand(60, 120),
-                    maxLife: 120,
-                    color: color,
-                    type: 'ink'
-                });
-            }
-            particles.push({ x, y, vx: 0, vy: 0, r: 2, life: 18, maxLife: 18, color: 'white', type: 'ink' });
-        }
+    revalidatePath('/announcements')
+    revalidatePath('/admin/announcements')
 
-        // ===== エフェクト：星 （ちゃんとした星形にできた）=====
-        function starExplosion(x, y) {
-            for (let i = 0; i < 40; i++) {
-                const angle = rand(0, Math.PI * 2);
-                const speed = rand(1, 10);
-                particles.push({
-                    x, y,
-                    vx: Math.cos(angle) * speed,
-                    vy: Math.sin(angle) * speed,
-                    r: rand(3, 8),
-                    life: rand(40, 80),
-                    maxLife: 80,
-                    color: ['#ffd700', '#ffff00', '#fff'][randInt(0, 2)],
-                    rotation: rand(0, Math.PI * 2),
-                    rotSpeed: rand(-0.1, 0.1),
-                    type: 'star'
-                });
-            }
-        }
-
-        // ===== エフェクト：波紋 =====
-        function ripple(x, y) {
-            for (let i = 0; i < 3; i++) {
-                particles.push({
-                    x, y,
-                    r: 5,
-                    maxR: 150,
-                    speed: rand(2, 4),
-                    life: 60,
-                    maxLife: 60,
-                    color: `hsl(${randInt(180, 220)} 70% 60%)`,
-                    delay: i * 8,
-                    type: 'ripple'
-                });
-            }
-        }
-
-        // ===== エフェクト：花火 =====
-        function firework(x, y) {
-            const color = `hsl(${randInt(0, 360)} 80% 60%)`;
-            for (let i = 0; i < 50; i++) {
-                const angle = rand(0, Math.PI * 2);
-                const speed = rand(3, 12);
-                particles.push({
-                    x, y,
-                    vx: Math.cos(angle) * speed,
-                    vy: Math.sin(angle) * speed - 2,
-                    r: rand(3, 8),
-                    life: rand(50, 90),
-                    maxLife: 90,
-                    color: color,
-                    gravity: 0.15,
-                    type: 'firework'
-                });
-            }
-        }
-
-        // ===== エフェクト：炎 =====
-        function flame(x, y) {
-            for (let i = 0; i < 30; i++) {
-                particles.push({
-                    x: x + rand(-10, 10),
-                    y: y,
-                    vx: rand(-1, 1),
-                    vy: rand(-8, -3),
-                    r: rand(5, 20),
-                    life: rand(30, 60),
-                    maxLife: 60,
-                    color: ['#ff4500', '#ff6347', '#ffa500', '#ffff00'][randInt(0, 3)],
-                    type: 'flame'
-                });
-            }
-        }
-
-        // ===== エフェクト：渦巻き =====
-        function spiral(x, y) {
-            for (let i = 0; i < 60; i++) {
-                const angle = (i / 60) * Math.PI * 6;
-                const dist = i * 2;
-                particles.push({
-                    x, y,
-                    angle: angle,
-                    dist: dist,
-                    speed: rand(1, 3),
-                    r: rand(3, 8),
-                    life: rand(60, 100),
-                    maxLife: 100,
-                    color: `hsl(${(i * 6) % 360} 70% 60%)`,
-                    type: 'spiral'
-                });
-            }
-        }
-
-        // effects 配列：lightning / snowflake を除去し、インデックスを 0..5 に
-        const effects = [
-            inkEffect,     // 0
-            starExplosion, // 1
-            ripple,        // 2
-            firework,      // 3
-            flame,         // 4
-            spiral         // 5
-        ];
-
-        function setEffect(index) {
-            currentEffect = index;
-            particles = [];
-            document.querySelectorAll('.menu button').forEach((btn, i) => {
-                btn.classList.toggle('active', i === index);
-            });
-        }
-
-        cvs.addEventListener('pointerdown', e => {
-            const rect = cvs.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            effects[currentEffect](x, y);
-        });
-
-        function updateParticles() {
-            for (let i = particles.length - 1; i >= 0; i--) {
-                const p = particles[i];
-                if (p.delay > 0) { p.delay--; continue; }
-                p.life--;
-                if (p.life <= 0) { particles.splice(i, 1); continue; }
-
-                switch (p.type) {
-                    case 'ink':
-                        p.x += p.vx; p.y += p.vy;
-                        p.vx *= 0.98; p.vy *= 0.98; p.vy += 0.08;
-                        break;
-                    case 'star':
-                        p.x += p.vx; p.y += p.vy;
-                        p.vx *= 0.98; p.vy *= 0.98; p.vy += 0.1;
-                        p.rotation += p.rotSpeed;
-                        break;
-                    case 'flame':
-                        p.x += p.vx; p.y += p.vy;
-                        p.vx *= 0.98; p.vy *= 0.98; p.vy += 0.1;
-                        break;
-                    case 'firework':
-                        p.x += p.vx; p.y += p.vy;
-                        p.vy += p.gravity;
-                        p.vx *= 0.99;
-                        break;
-                    case 'ripple':
-                        p.r += p.speed;
-                        break;
-                    case 'spiral':
-                        p.angle += 0.05; p.dist += p.speed;
-                        p.x += Math.cos(p.angle) * p.speed;
-                        p.y += Math.sin(p.angle) * p.speed;
-                        break;
-                }
-            }
-        }
-
-        function drawParticles() {
-            particles.forEach(p => {
-                const alpha = p.life / p.maxLife;
-                switch (p.type) {
-                    case 'ink':
-                        ctx.globalAlpha = Math.max(0, alpha);
-                        ctx.fillStyle = p.color;
-                        ctx.beginPath();
-                        ctx.arc(p.x, p.y, Math.max(0.5, p.r * alpha), 0, Math.PI * 2);
-                        ctx.fill();
-                        break;
-                    case 'star':
-                        ctx.globalAlpha = alpha;
-                        ctx.fillStyle = p.color;
-                        ctx.save();
-                        ctx.translate(p.x, p.y);
-                        ctx.rotate(p.rotation);
-                        ctx.scale(alpha, alpha);
-                        ctx.beginPath();
-                        for (let i = 0; i < 5; i++) {
-                            const angle = (i * 4 * Math.PI) / 5 - Math.PI / 2;
-                            const x = Math.cos(angle) * p.r;
-                            const y = Math.sin(angle) * p.r;
-                            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-                        }
-                        ctx.closePath();
-                        ctx.fill();
-                        ctx.shadowBlur = 10;
-                        ctx.shadowColor = p.color;
-                        ctx.fill();
-                        ctx.shadowBlur = 0;
-                        ctx.restore();
-                        break;
-                    case 'flame':
-                    case 'firework':
-                        ctx.globalAlpha = alpha;
-                        ctx.fillStyle = p.color;
-                        ctx.beginPath();
-                        ctx.arc(p.x, p.y, p.r * alpha, 0, Math.PI * 2);
-                        ctx.fill();
-                        break;
-                    case 'ripple':
-                        ctx.strokeStyle = p.color;
-                        ctx.lineWidth = 3;
-                        ctx.beginPath();
-                        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-                        ctx.stroke();
-                        break;
-                    case 'spiral':
-                        ctx.fillStyle = p.color;
-                        ctx.beginPath();
-                        ctx.arc(p.x, p.y, p.r * alpha, 0, Math.PI * 2);
-                        ctx.fill();
-                        break;
-                }
-            });
-            ctx.globalAlpha = 1;
-        }
-
-        function loop() {
-            ctx.fillStyle = 'rgba(10, 10, 10, 0.15)';
-            ctx.fillRect(0, 0, W, H);
-            updateParticles();
-            drawParticles();
-            requestAnimationFrame(loop);
-        }
-
-        loop();
-    </script>
-</body>
-
-</html>
+    return { success: true }
+  } catch (error) {
+    console.error('Failed to delete announcement:', error)
+    return { success: false, error: 'お知らせの削除に失敗しました' }
+  }
+}
